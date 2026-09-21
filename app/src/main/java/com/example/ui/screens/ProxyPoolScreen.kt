@@ -25,10 +25,12 @@ import androidx.compose.material.icons.filled.Bolt
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.CloudDownload
+import androidx.compose.material.icons.filled.ContentPaste
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Link
 import androidx.compose.material.icons.filled.NetworkCheck
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Router
 import androidx.compose.material.icons.filled.Security
@@ -38,6 +40,8 @@ import androidx.compose.material.icons.filled.VpnKey
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.Checkbox
+import androidx.compose.material3.CheckboxDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
@@ -59,6 +63,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -98,9 +103,12 @@ fun ProxyPoolScreen(
     onToggleAutoRotate: (Boolean) -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val clipboardManager = LocalClipboardManager.current
+    val defaultAsocksUrl = "https://asocks-list.org/pSdYd8yOdIypoOpwNOpAkh4PgC7sw2Yr.txt?limit=10&type=res&template_id=2&country=US"
+
     var urlInput by remember {
         mutableStateOf(
-            currentSettings.proxyListUrl.ifBlank { IdentityService.DEFAULT_ASOCKS_URL }
+            currentSettings.proxyListUrl.ifBlank { defaultAsocksUrl }
         )
     }
     var selectedProtocol by remember { mutableStateOf("socks5") }
@@ -233,50 +241,75 @@ fun ProxyPoolScreen(
                             imageVector = Icons.Default.CloudDownload,
                             contentDescription = null,
                             tint = CpaPrimary,
-                            modifier = Modifier.size(18.dp)
+                            modifier = Modifier.size(20.dp)
                         )
                         Spacer(modifier = Modifier.width(8.dp))
                         Text(
-                            text = "FETCH FROM URL / ASOCKS WHITELIST",
+                            text = "FETCH FROM URL / ASOCKS",
                             color = CpaText,
-                            fontSize = 12.sp,
+                            fontSize = 13.sp,
                             fontWeight = FontWeight.Bold,
                             letterSpacing = 0.8.sp
                         )
                     }
+                }
 
-                    // Preset pill button
+                Spacer(modifier = Modifier.height(8.dp))
+
+                // Presets Row
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    OutlinedButton(
+                        onClick = {
+                            urlInput = defaultAsocksUrl
+                            selectedProtocol = "socks5"
+                        },
+                        colors = ButtonDefaults.outlinedButtonColors(
+                            containerColor = CpaPrimaryDim.copy(alpha = 0.5f),
+                            contentColor = CpaPrimary
+                        ),
+                        border = ButtonDefaults.outlinedButtonBorder.copy(brush = androidx.compose.ui.graphics.SolidColor(CpaPrimaryBorder)),
+                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                        modifier = Modifier.height(28.dp).weight(1f)
+                    ) {
+                        Icon(Icons.Default.Bolt, contentDescription = null, modifier = Modifier.size(12.dp))
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text("Asocks (10 US)", fontSize = 10.sp, fontWeight = FontWeight.Bold, maxLines = 1)
+                    }
+
                     OutlinedButton(
                         onClick = {
                             urlInput = IdentityService.DEFAULT_ASOCKS_URL
                             selectedProtocol = "socks5"
                         },
                         colors = ButtonDefaults.outlinedButtonColors(
-                            containerColor = CpaPrimaryDim.copy(alpha = 0.4f),
+                            containerColor = CpaPrimaryDim.copy(alpha = 0.3f),
                             contentColor = CpaPrimary
                         ),
                         border = ButtonDefaults.outlinedButtonBorder.copy(brush = androidx.compose.ui.graphics.SolidColor(CpaPrimaryBorder)),
                         contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
-                        modifier = Modifier.height(26.dp)
+                        modifier = Modifier.height(28.dp).weight(1f)
                     ) {
                         Icon(Icons.Default.Bolt, contentDescription = null, modifier = Modifier.size(12.dp))
                         Spacer(modifier = Modifier.width(4.dp))
-                        Text("Asocks US (100 IPs)", fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                        Text("Asocks (100 US)", fontSize = 10.sp, fontWeight = FontWeight.Bold, maxLines = 1)
                     }
                 }
 
                 Spacer(modifier = Modifier.height(10.dp))
 
                 Text(
-                    text = "Enter direct proxy list URL (plain text IP:Port per line). Works with Asocks whitelist, Webshare, or any residential proxy provider.",
+                    text = "Direct proxy list URL (plain text IP:Port or user:pass@host:port). Supports Asocks, Webshare, etc.",
                     color = CpaTextDim,
                     fontSize = 11.sp,
                     lineHeight = 15.sp
                 )
 
-                Spacer(modifier = Modifier.height(10.dp))
+                Spacer(modifier = Modifier.height(8.dp))
 
-                // URL Input Field
+                // URL Input Field with Paste & Clear
                 OutlinedTextField(
                     value = urlInput,
                     onValueChange = {
@@ -285,7 +318,7 @@ fun ProxyPoolScreen(
                     },
                     placeholder = {
                         Text(
-                            "https://asocks-list.org/whitelist/....txt?limit=100&type=res&country=US",
+                            "https://asocks-list.org/whitelist/....txt?limit=10&country=US",
                             color = CpaTextMuted,
                             fontSize = 11.sp
                         )
@@ -296,17 +329,36 @@ fun ProxyPoolScreen(
                     singleLine = false,
                     maxLines = 3,
                     trailingIcon = {
-                        if (urlInput.isNotBlank()) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
                             IconButton(
-                                onClick = { urlInput = "" },
-                                modifier = Modifier.size(24.dp)
+                                onClick = {
+                                    val clip = clipboardManager.getText()?.text
+                                    if (!clip.isNullOrBlank()) {
+                                        urlInput = clip.trim()
+                                        fetchFeedback = null
+                                    }
+                                },
+                                modifier = Modifier.size(28.dp)
                             ) {
                                 Icon(
-                                    Icons.Default.Close,
-                                    contentDescription = "Clear",
-                                    tint = CpaTextMuted,
+                                    Icons.Default.ContentPaste,
+                                    contentDescription = "Paste",
+                                    tint = CpaPrimary,
                                     modifier = Modifier.size(16.dp)
                                 )
+                            }
+                            if (urlInput.isNotBlank()) {
+                                IconButton(
+                                    onClick = { urlInput = "" },
+                                    modifier = Modifier.size(28.dp)
+                                ) {
+                                    Icon(
+                                        Icons.Default.Close,
+                                        contentDescription = "Clear",
+                                        tint = CpaTextMuted,
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                }
                             }
                         }
                     },
@@ -325,79 +377,78 @@ fun ProxyPoolScreen(
                     shape = RoundedCornerShape(8.dp)
                 )
 
-                Spacer(modifier = Modifier.height(10.dp))
+                Spacer(modifier = Modifier.height(8.dp))
 
-                // Protocol selector and Fetch Button Row
+                // Protocol selector
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Row(
-                        horizontalArrangement = Arrangement.spacedBy(6.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text("Type:", color = CpaTextMuted, fontSize = 11.sp)
-                        listOf("socks5", "http", "socks4").forEach { proto ->
-                            FilterChip(
+                    Text("Protocol:", color = CpaTextMuted, fontSize = 11.sp)
+                    listOf("socks5", "http", "socks4").forEach { proto ->
+                        FilterChip(
+                            selected = selectedProtocol == proto,
+                            onClick = { selectedProtocol = proto },
+                            label = {
+                                Text(
+                                    proto.uppercase(),
+                                    fontSize = 10.sp,
+                                    fontWeight = if (selectedProtocol == proto) FontWeight.Bold else FontWeight.Normal
+                                )
+                            },
+                            colors = FilterChipDefaults.filterChipColors(
+                                selectedContainerColor = CpaPrimaryDim,
+                                selectedLabelColor = CpaPrimary,
+                                containerColor = CpaCard,
+                                labelColor = CpaTextDim
+                            ),
+                            border = FilterChipDefaults.filterChipBorder(
+                                enabled = true,
                                 selected = selectedProtocol == proto,
-                                onClick = { selectedProtocol = proto },
-                                label = {
-                                    Text(
-                                        proto.uppercase(),
-                                        fontSize = 10.sp,
-                                        fontWeight = if (selectedProtocol == proto) FontWeight.Bold else FontWeight.Normal
-                                    )
-                                },
-                                colors = FilterChipDefaults.filterChipColors(
-                                    selectedContainerColor = CpaPrimaryDim,
-                                    selectedLabelColor = CpaPrimary,
-                                    containerColor = CpaCard,
-                                    labelColor = CpaTextDim
-                                ),
-                                border = FilterChipDefaults.filterChipBorder(
-                                    enabled = true,
-                                    selected = selectedProtocol == proto,
-                                    borderColor = if (selectedProtocol == proto) CpaPrimary else CpaBorder
-                                ),
-                                modifier = Modifier.height(28.dp)
-                            )
-                        }
+                                borderColor = if (selectedProtocol == proto) CpaPrimary else CpaBorder
+                            ),
+                            modifier = Modifier.height(26.dp)
+                        )
                     }
+                }
 
-                    Button(
-                        onClick = {
-                            if (urlInput.isBlank() || isFetching) return@Button
-                            isFetching = true
-                            fetchFeedback = null
-                            onFetchFromUrl(urlInput.trim(), selectedProtocol) { success, message, count ->
-                                isFetching = false
-                                fetchFeedback = Pair(success, if (success) "Loaded $count proxies from URL" else message)
-                            }
-                        },
-                        enabled = !isFetching && urlInput.isNotBlank(),
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = CpaPrimary,
-                            contentColor = Color.Black
-                        ),
-                        shape = RoundedCornerShape(8.dp),
-                        modifier = Modifier
-                            .height(34.dp)
-                            .testTag("fetch_proxies_button")
-                    ) {
-                        if (isFetching) {
-                            CircularProgressIndicator(
-                                modifier = Modifier.size(14.dp),
-                                color = Color.Black,
-                                strokeWidth = 2.dp
-                            )
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text("Fetching...", fontSize = 11.sp, fontWeight = FontWeight.Bold)
-                        } else {
-                            Icon(Icons.Default.Download, contentDescription = null, modifier = Modifier.size(14.dp))
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text("Fetch Proxies", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                Spacer(modifier = Modifier.height(10.dp))
+
+                // Prominent Full-Width Fetch Button
+                Button(
+                    onClick = {
+                        if (urlInput.isBlank() || isFetching) return@Button
+                        isFetching = true
+                        fetchFeedback = null
+                        onFetchFromUrl(urlInput.trim(), selectedProtocol) { success, message, count ->
+                            isFetching = false
+                            fetchFeedback = Pair(success, if (success) "تم بنجاح استيراد $count بروكسي وتعيين الأول كبروكسي نشط" else message)
                         }
+                    },
+                    enabled = !isFetching && urlInput.isNotBlank(),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = CpaPrimary,
+                        contentColor = Color.Black
+                    ),
+                    shape = RoundedCornerShape(8.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(42.dp)
+                        .testTag("fetch_proxies_button")
+                ) {
+                    if (isFetching) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(16.dp),
+                            color = Color.Black,
+                            strokeWidth = 2.dp
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("جاري جلب وفحص البروكسيات...", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                    } else {
+                        Icon(Icons.Default.CloudDownload, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("جلب البروكسيات من الرابط (Fetch Proxies Now)", fontSize = 12.sp, fontWeight = FontWeight.Bold)
                     }
                 }
 
@@ -840,11 +891,56 @@ fun ProxyPoolScreen(
 
     // --- Add Single Proxy Dialog ---
     if (showAddSingleDialog) {
+        var quickPaste by remember { mutableStateOf("") }
         var host by remember { mutableStateOf("") }
         var port by remember { mutableStateOf("") }
         var type by remember { mutableStateOf("socks5") }
         var user by remember { mutableStateOf("") }
         var pass by remember { mutableStateOf("") }
+        var setActive by remember { mutableStateOf(true) }
+        var isTestingDialog by remember { mutableStateOf(false) }
+        var dialogTestResult by remember { mutableStateOf<Pair<Boolean, String>?>(null) }
+
+        fun parseAndFill(input: String) {
+            val raw = input.trim()
+            if (raw.isBlank()) return
+            var working = raw
+            if (working.startsWith("socks5://", ignoreCase = true)) {
+                type = "socks5"
+                working = working.substring("socks5://".length)
+            } else if (working.startsWith("http://", ignoreCase = true)) {
+                type = "http"
+                working = working.substring("http://".length)
+            } else if (working.startsWith("socks4://", ignoreCase = true)) {
+                type = "socks4"
+                working = working.substring("socks4://".length)
+            }
+
+            if (working.contains("@")) {
+                val parts = working.split("@")
+                if (parts.size >= 2) {
+                    val creds = parts[0].split(":")
+                    if (creds.isNotEmpty()) user = creds[0]
+                    if (creds.size > 1) pass = creds[1]
+                    val hp = parts[1].split(":")
+                    if (hp.isNotEmpty()) host = hp[0].trim()
+                    if (hp.size > 1) port = hp[1].filter { it.isDigit() }
+                }
+            } else if (working.contains(":")) {
+                val parts = working.split(":")
+                if (parts.size == 2) {
+                    host = parts[0].trim()
+                    port = parts[1].filter { it.isDigit() }
+                } else if (parts.size >= 4) {
+                    host = parts[0].trim()
+                    port = parts[1].filter { it.isDigit() }
+                    user = parts[2].trim()
+                    pass = parts[3].trim()
+                }
+            } else {
+                host = working.trim()
+            }
+        }
 
         Dialog(onDismissRequest = { showAddSingleDialog = false }) {
             Surface(
@@ -855,25 +951,57 @@ fun ProxyPoolScreen(
             ) {
                 Column(
                     modifier = Modifier
-                        .padding(20.dp)
+                        .padding(16.dp)
                         .border(1.dp, CpaBorder, RoundedCornerShape(12.dp))
-                        .padding(4.dp)
+                        .padding(12.dp)
                 ) {
-                    Text(
-                        text = "ADD SINGLE PROXY",
-                        color = CpaPrimary,
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.Bold,
-                        letterSpacing = 1.sp
-                    )
-                    Spacer(modifier = Modifier.height(12.dp))
-
-                    OutlinedTextField(
-                        value = host,
-                        onValueChange = { host = it },
-                        label = { Text("Proxy Host / IP", color = CpaTextDim, fontSize = 11.sp) },
-                        placeholder = { Text("185.185.51.69", color = CpaTextMuted, fontSize = 11.sp) },
+                    Row(
                         modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "إضافة بروكسي منفرد / ADD PROXY",
+                            color = CpaPrimary,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold,
+                            letterSpacing = 0.5.sp
+                        )
+                        IconButton(
+                            onClick = { showAddSingleDialog = false },
+                            modifier = Modifier.size(24.dp)
+                        ) {
+                            Icon(Icons.Default.Close, contentDescription = "Close", tint = CpaTextMuted, modifier = Modifier.size(16.dp))
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(10.dp))
+
+                    // Quick Paste & Auto-parse field
+                    OutlinedTextField(
+                        value = quickPaste,
+                        onValueChange = {
+                            quickPaste = it
+                            dialogTestResult = null
+                            parseAndFill(it)
+                        },
+                        label = { Text("لصق سريع (أي صيغة: host:port:user:pass)", color = CpaTextDim, fontSize = 10.sp) },
+                        placeholder = { Text("185.185.51.69:4220 أو socks5://u:p@host:port", color = CpaTextMuted, fontSize = 10.sp) },
+                        modifier = Modifier.fillMaxWidth(),
+                        trailingIcon = {
+                            IconButton(
+                                onClick = {
+                                    val clip = clipboardManager.getText()?.text
+                                    if (!clip.isNullOrBlank()) {
+                                        quickPaste = clip.trim()
+                                        parseAndFill(clip.trim())
+                                    }
+                                },
+                                modifier = Modifier.size(24.dp)
+                            ) {
+                                Icon(Icons.Default.ContentPaste, contentDescription = "Paste", tint = CpaPrimary, modifier = Modifier.size(15.dp))
+                            }
+                        },
                         colors = OutlinedTextFieldDefaults.colors(
                             focusedContainerColor = CpaBg,
                             unfocusedContainerColor = CpaBg,
@@ -888,15 +1016,45 @@ fun ProxyPoolScreen(
 
                     Spacer(modifier = Modifier.height(8.dp))
 
+                    OutlinedTextField(
+                        value = host,
+                        onValueChange = {
+                            if (it.contains(":") || it.contains("@")) {
+                                parseAndFill(it)
+                            } else {
+                                host = it
+                            }
+                            dialogTestResult = null
+                        },
+                        label = { Text("Proxy Host / IP *", color = CpaTextDim, fontSize = 10.sp) },
+                        placeholder = { Text("185.185.51.69", color = CpaTextMuted, fontSize = 10.sp) },
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedContainerColor = CpaBg,
+                            unfocusedContainerColor = CpaBg,
+                            focusedBorderColor = CpaPrimary,
+                            unfocusedBorderColor = CpaBorder,
+                            focusedTextColor = CpaText,
+                            unfocusedTextColor = CpaText
+                        ),
+                        singleLine = true,
+                        shape = RoundedCornerShape(8.dp)
+                    )
+
+                    Spacer(modifier = Modifier.height(6.dp))
+
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
                         OutlinedTextField(
                             value = port,
-                            onValueChange = { port = it.filter { ch -> ch.isDigit() } },
-                            label = { Text("Port", color = CpaTextDim, fontSize = 11.sp) },
-                            placeholder = { Text("4220", color = CpaTextMuted, fontSize = 11.sp) },
+                            onValueChange = {
+                                port = it.filter { ch -> ch.isDigit() }
+                                dialogTestResult = null
+                            },
+                            label = { Text("Port *", color = CpaTextDim, fontSize = 10.sp) },
+                            placeholder = { Text("4220", color = CpaTextMuted, fontSize = 10.sp) },
                             modifier = Modifier.weight(1f),
                             colors = OutlinedTextFieldDefaults.colors(
                                 focusedContainerColor = CpaBg,
@@ -929,12 +1087,37 @@ fun ProxyPoolScreen(
                         }
                     }
 
-                    Spacer(modifier = Modifier.height(8.dp))
+                    Spacer(modifier = Modifier.height(6.dp))
 
                     OutlinedTextField(
                         value = user,
-                        onValueChange = { user = it },
-                        label = { Text("Username (Optional)", color = CpaTextDim, fontSize = 11.sp) },
+                        onValueChange = {
+                            user = it
+                            dialogTestResult = null
+                        },
+                        label = { Text("Username (Optional)", color = CpaTextDim, fontSize = 10.sp) },
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedContainerColor = CpaBg,
+                            unfocusedContainerColor = CpaBg,
+                            focusedBorderColor = CpaPrimary,
+                            unfocusedBorderColor = CpaBorder,
+                            focusedTextColor = CpaText,
+                            unfocusedTextColor = CpaText
+                        ),
+                        singleLine = true,
+                        shape = RoundedCornerShape(8.dp)
+                    )
+
+                    Spacer(modifier = Modifier.height(6.dp))
+
+                    OutlinedTextField(
+                        value = pass,
+                        onValueChange = {
+                            pass = it
+                            dialogTestResult = null
+                        },
+                        label = { Text("Password (Optional)", color = CpaTextDim, fontSize = 10.sp) },
                         modifier = Modifier.fillMaxWidth(),
                         colors = OutlinedTextFieldDefaults.colors(
                             focusedContainerColor = CpaBg,
@@ -950,62 +1133,137 @@ fun ProxyPoolScreen(
 
                     Spacer(modifier = Modifier.height(8.dp))
 
-                    OutlinedTextField(
-                        value = pass,
-                        onValueChange = { pass = it },
-                        label = { Text("Password (Optional)", color = CpaTextDim, fontSize = 11.sp) },
-                        modifier = Modifier.fillMaxWidth(),
-                        colors = OutlinedTextFieldDefaults.colors(
-                            focusedContainerColor = CpaBg,
-                            unfocusedContainerColor = CpaBg,
-                            focusedBorderColor = CpaPrimary,
-                            unfocusedBorderColor = CpaBorder,
-                            focusedTextColor = CpaText,
-                            unfocusedTextColor = CpaText
-                        ),
-                        singleLine = true,
-                        shape = RoundedCornerShape(8.dp)
-                    )
+                    // Activate Immediately Checkbox
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { setActive = !setActive },
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Checkbox(
+                            checked = setActive,
+                            onCheckedChange = { setActive = it },
+                            colors = CheckboxDefaults.colors(
+                                checkedColor = CpaPrimary,
+                                checkmarkColor = Color.Black
+                            )
+                        )
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text(
+                            text = "تعيين كبروكسي نشط فوراً (Set Active)",
+                            color = CpaText,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Medium
+                        )
+                    }
 
-                    Spacer(modifier = Modifier.height(16.dp))
+                    // Test Proxy Result Banner
+                    dialogTestResult?.let { (ok, msg) ->
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(6.dp))
+                                .background(if (ok) CpaSuccess.copy(alpha = 0.15f) else CpaError.copy(alpha = 0.15f))
+                                .padding(horizontal = 8.dp, vertical = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(
+                                imageVector = if (ok) Icons.Default.CheckCircle else Icons.Default.Close,
+                                contentDescription = null,
+                                tint = if (ok) CpaSuccess else CpaError,
+                                modifier = Modifier.size(12.dp)
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(
+                                text = msg,
+                                color = if (ok) CpaSuccess else CpaError,
+                                fontSize = 10.sp,
+                                fontFamily = FontFamily.Monospace
+                            )
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(12.dp))
 
                     Row(
                         modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.End
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
+                        // Test Button
                         OutlinedButton(
-                            onClick = { showAddSingleDialog = false },
-                            colors = ButtonDefaults.outlinedButtonColors(contentColor = CpaTextMuted),
-                            modifier = Modifier.height(36.dp)
-                        ) {
-                            Text("Cancel", fontSize = 12.sp)
-                        }
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Button(
                             onClick = {
                                 val p = port.toIntOrNull()
                                 if (host.isNotBlank() && p != null && p > 0) {
-                                    onAddSingleProxy(
-                                        ProxyItem(
+                                    isTestingDialog = true
+                                    dialogTestResult = null
+                                    val testItem = ProxyItem(
+                                        host = host.trim(),
+                                        port = p,
+                                        type = type,
+                                        username = user.trim(),
+                                        password = pass.trim()
+                                    )
+                                    onTestProxy(testItem) { ok, msg ->
+                                        isTestingDialog = false
+                                        dialogTestResult = Pair(ok, msg)
+                                    }
+                                }
+                            },
+                            enabled = host.isNotBlank() && port.toIntOrNull() != null && !isTestingDialog,
+                            colors = ButtonDefaults.outlinedButtonColors(contentColor = CpaPrimary),
+                            border = ButtonDefaults.outlinedButtonBorder.copy(brush = androidx.compose.ui.graphics.SolidColor(CpaPrimary)),
+                            modifier = Modifier.height(36.dp)
+                        ) {
+                            if (isTestingDialog) {
+                                CircularProgressIndicator(modifier = Modifier.size(12.dp), strokeWidth = 1.5.dp, color = CpaPrimary)
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text("فحص...", fontSize = 11.sp)
+                            } else {
+                                Icon(Icons.Default.Speed, contentDescription = null, modifier = Modifier.size(14.dp))
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text("فحص الاتصال", fontSize = 11.sp)
+                            }
+                        }
+
+                        Row {
+                            OutlinedButton(
+                                onClick = { showAddSingleDialog = false },
+                                colors = ButtonDefaults.outlinedButtonColors(contentColor = CpaTextMuted),
+                                modifier = Modifier.height(36.dp)
+                            ) {
+                                Text("إلغاء", fontSize = 11.sp)
+                            }
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Button(
+                                onClick = {
+                                    val p = port.toIntOrNull()
+                                    if (host.isNotBlank() && p != null && p > 0) {
+                                        val newProxy = ProxyItem(
                                             host = host.trim(),
                                             port = p,
                                             type = type,
                                             username = user.trim(),
                                             password = pass.trim()
                                         )
-                                    )
-                                    showAddSingleDialog = false
-                                }
-                            },
-                            enabled = host.isNotBlank() && port.toIntOrNull() != null,
-                            colors = ButtonDefaults.buttonColors(
-                                containerColor = CpaPrimary,
-                                contentColor = Color.Black
-                            ),
-                            shape = RoundedCornerShape(8.dp),
-                            modifier = Modifier.height(36.dp)
-                        ) {
-                            Text("Add Proxy", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                        onAddSingleProxy(newProxy)
+                                        if (setActive) {
+                                            onSetActiveProxy(newProxy)
+                                        }
+                                        showAddSingleDialog = false
+                                    }
+                                },
+                                enabled = host.isNotBlank() && port.toIntOrNull() != null,
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = CpaPrimary,
+                                    contentColor = Color.Black
+                                ),
+                                shape = RoundedCornerShape(8.dp),
+                                modifier = Modifier.height(36.dp)
+                            ) {
+                                Text("حفظ البروكسي", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                            }
                         }
                     }
                 }

@@ -1,5 +1,6 @@
 package com.example.service
 
+import android.util.Log
 import com.example.data.model.ExtractedInfo
 import com.example.data.model.GeneratedIdentity
 import com.example.data.model.ProxyItem
@@ -8,6 +9,7 @@ import kotlinx.coroutines.withContext
 import okhttp3.Credentials
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import org.json.JSONArray
 import org.json.JSONObject
 import java.net.InetSocketAddress
 import java.net.Proxy
@@ -264,34 +266,42 @@ object IdentityService {
         proxyPass: String? = null
     ): ExtractedInfo = withContext(Dispatchers.IO) {
         val clientBuilder = OkHttpClient.Builder()
-            .connectTimeout(10, TimeUnit.SECONDS)
-            .readTimeout(10, TimeUnit.SECONDS)
+            .connectTimeout(12, TimeUnit.SECONDS)
+            .readTimeout(12, TimeUnit.SECONDS)
+            .writeTimeout(12, TimeUnit.SECONDS)
+            .followRedirects(true)
+            .retryOnConnectionFailure(true)
 
         val hasProxy = !proxyHost.isNullOrBlank() && proxyPort != null && proxyPort > 0 && proxyType != "none" && proxyType != "direct"
 
         if (hasProxy) {
-            try {
-                val isSocks = proxyType?.equals("socks", ignoreCase = true) == true || proxyType?.startsWith("socks") == true
-                val pType = if (isSocks) Proxy.Type.SOCKS else Proxy.Type.HTTP
-                clientBuilder.proxy(Proxy(pType, InetSocketAddress(proxyHost, proxyPort)))
+            val cleanHost = proxyHost.trim()
+            val cleanType = proxyType?.trim()?.lowercase() ?: "socks5"
+            val cleanUser = proxyUser?.trim().orEmpty()
+            val cleanPass = proxyPass?.trim().orEmpty()
+            val isSocks = cleanType == "socks" || cleanType == "socks5" || cleanType == "socks4"
 
-                if (!proxyUser.isNullOrBlank() && !proxyPass.isNullOrBlank()) {
-                    // Authenticator for Java Socket / SOCKS
-                    java.net.Authenticator.setDefault(object : java.net.Authenticator() {
-                        override fun getPasswordAuthentication(): java.net.PasswordAuthentication {
-                            return java.net.PasswordAuthentication(proxyUser, proxyPass.toCharArray())
+            try {
+                if (isSocks) {
+                    val bridgePort = com.example.util.LocalSocks5HttpBridge.start(cleanHost, proxyPort, cleanUser, cleanPass)
+                    if (bridgePort > 0) {
+                        clientBuilder.proxy(Proxy(Proxy.Type.HTTP, InetSocketAddress("127.0.0.1", bridgePort)))
+                    } else {
+                        clientBuilder.proxy(Proxy(Proxy.Type.SOCKS, InetSocketAddress(cleanHost, proxyPort)))
+                    }
+                } else {
+                    clientBuilder.proxy(Proxy(Proxy.Type.HTTP, InetSocketAddress(cleanHost, proxyPort)))
+                    if (cleanUser.isNotBlank() && cleanPass.isNotBlank()) {
+                        clientBuilder.proxyAuthenticator { _, response ->
+                            val credential = Credentials.basic(cleanUser, cleanPass)
+                            response.request.newBuilder()
+                                .header("Proxy-Authorization", credential)
+                                .build()
                         }
-                    })
-                    // Proxy-Authorization for HTTP proxy
-                    clientBuilder.proxyAuthenticator { _, response ->
-                        val credential = Credentials.basic(proxyUser, proxyPass)
-                        response.request.newBuilder()
-                            .header("Proxy-Authorization", credential)
-                            .build()
                     }
                 }
             } catch (e: Exception) {
-                // Ignore proxy setup failure
+                Log.e("IdentityService", "Failed to configure proxy client: ${e.message}")
             }
         }
 
@@ -299,6 +309,7 @@ object IdentityService {
 
         val endpoints = listOf(
             "https://api.ipify.org?format=json",
+            "https://api.myip.com",
             "https://ipapi.co/json/",
             "https://ipwho.is/",
             "https://api.i.pn/json/"
@@ -356,7 +367,7 @@ object IdentityService {
         }
 
         if (hasProxy) {
-            // If proxy was explicitly configured and all endpoints failed, report proxy error rather than fake IP!
+            // When proxy is configured and all endpoints failed, report connection failure
             return@withContext ExtractedInfo(
                 ip = "Proxy Unreachable",
                 country = "Connection Error",
@@ -376,22 +387,20 @@ object IdentityService {
             )
         }
 
-        // Fallback realistic IP if network is unavailable or rate-limited (only when direct connection is used)
-        val fakeIp = "${rnd.nextInt(180) + 40}.${rnd.nextInt(250) + 1}.${rnd.nextInt(250) + 1}.${rnd.nextInt(250) + 1}"
-        val city = US_CITIES[rnd.nextInt(US_CITIES.size)]
+        // Direct connection failed (no internet) - NO FAKE IP GENERATION!
         ExtractedInfo(
-            ip = fakeIp,
-            country = "United States",
-            countryCode = "US",
-            city = city.first,
-            region = city.second,
+            ip = "Direct (No Internet)",
+            country = "Offline",
+            countryCode = "--",
+            city = "Offline",
+            region = "",
             street = "",
-            postalCode = city.third,
+            postalCode = "",
             timezone = "America/New_York",
             language = "en-US",
             currency = "USD",
-            isp = "Charter Communications",
-            org = "Spectrum Residential",
+            isp = "Disconnected",
+            org = "No Internet Connection",
             latitude = 40.7128,
             longitude = -74.0060,
             isProxy = false
@@ -458,44 +467,128 @@ object IdentityService {
             clean = clean.substring("https://".length)
         }
 
-        // Format: user:pass@host:port
+        // Format 1: user:pass@host:port OR host:port@user:pass
         if (clean.contains("@")) {
             val atParts = clean.split("@")
-            val authPart = atParts[0]
-            val hostPart = atParts.getOrNull(1) ?: return null
+            val part1 = atParts[0].trim()
+            val part2 = atParts.getOrNull(1)?.trim() ?: return null
 
-            val authTokens = authPart.split(":")
-            val user = authTokens.getOrElse(0) { "" }
-            val pass = authTokens.getOrElse(1) { "" }
-
-            val hostTokens = hostPart.split(":")
-            val host = hostTokens.getOrElse(0) { "" }.trim()
-            val port = hostTokens.getOrNull(1)?.filter { it.isDigit() }?.toIntOrNull() ?: return null
-            if (host.isEmpty()) return null
-            return ProxyItem(host = host, port = port, type = type, username = user, password = pass)
+            val hostTokens = part2.split(":")
+            val portCandidate = hostTokens.getOrNull(1)?.filter { it.isDigit() }?.toIntOrNull()
+            if (hostTokens.size >= 2 && portCandidate != null && portCandidate in 1..65535) {
+                // user:pass@host:port
+                val authTokens = part1.split(":")
+                val user = authTokens.getOrElse(0) { "" }.trim()
+                val pass = authTokens.getOrElse(1) { "" }.trim()
+                val host = hostTokens[0].trim()
+                if (host.isNotEmpty()) {
+                    return ProxyItem(host = host, port = portCandidate, type = type, username = user, password = pass)
+                }
+            } else {
+                // host:port@user:pass
+                val hostTokens1 = part1.split(":")
+                val portCandidate1 = hostTokens1.getOrNull(1)?.filter { it.isDigit() }?.toIntOrNull()
+                if (hostTokens1.size >= 2 && portCandidate1 != null && portCandidate1 in 1..65535) {
+                    val authTokens = part2.split(":")
+                    val user = authTokens.getOrElse(0) { "" }.trim()
+                    val pass = authTokens.getOrElse(1) { "" }.trim()
+                    val host = hostTokens1[0].trim()
+                    if (host.isNotEmpty()) {
+                        return ProxyItem(host = host, port = portCandidate1, type = type, username = user, password = pass)
+                    }
+                }
+            }
         }
 
-        // Format: host:port:user:pass or host:port
-        val tokens = clean.split(":")
+        // Format 2: delimiters like colon, comma, tab, space, pipe
+        val delimiters = if (clean.contains("\t")) arrayOf("\t")
+        else if (clean.contains("|")) arrayOf("|")
+        else if (clean.contains(",")) arrayOf(",")
+        else if (clean.contains(" ")) arrayOf(" ")
+        else arrayOf(":")
+
+        val tokens = clean.split(*delimiters).map { it.trim() }.filter { it.isNotEmpty() }
         if (tokens.size >= 2) {
-            val host = tokens[0].trim()
-            val port = tokens[1].trim().filter { it.isDigit() }.toIntOrNull() ?: return null
-            val user = tokens.getOrNull(2)?.trim() ?: ""
-            val pass = tokens.getOrNull(3)?.trim() ?: ""
-            if (host.isEmpty()) return null
-            return ProxyItem(host = host, port = port, type = type, username = user, password = pass)
+            // Case A: host:port:user:pass or host:port
+            val portCandidate = tokens[1].filter { it.isDigit() }.toIntOrNull()
+            if (portCandidate != null && portCandidate in 1..65535) {
+                val host = tokens[0]
+                val user = tokens.getOrNull(2) ?: ""
+                val pass = tokens.getOrNull(3) ?: ""
+                if (host.isNotEmpty()) {
+                    return ProxyItem(host = host, port = portCandidate, type = type, username = user, password = pass)
+                }
+            }
+
+            // Case B: user:pass:host:port
+            if (tokens.size >= 4) {
+                val lastPort = tokens[3].filter { it.isDigit() }.toIntOrNull()
+                if (lastPort != null && lastPort in 1..65535) {
+                    val user = tokens[0]
+                    val pass = tokens[1]
+                    val host = tokens[2]
+                    if (host.isNotEmpty()) {
+                        return ProxyItem(host = host, port = lastPort, type = type, username = user, password = pass)
+                    }
+                }
+            }
         }
 
         return null
     }
 
     fun parseBulkProxies(text: String, defaultType: String = "socks5"): List<ProxyItem> {
-        val lines = text.split("\n", "\r\n", ";")
+        val trimmed = text.trim()
         val result = mutableListOf<ProxyItem>()
-        for (line in lines) {
-            val p = parseProxyLine(line, defaultType)
-            if (p != null) {
-                result.add(p)
+
+        // Check if response is JSON (array or object)
+        if (trimmed.startsWith("[") || trimmed.startsWith("{")) {
+            try {
+                if (trimmed.startsWith("[")) {
+                    val arr = JSONArray(trimmed)
+                    for (i in 0 until arr.length()) {
+                        val obj = arr.optJSONObject(i) ?: continue
+                        val host = obj.optString("ip", obj.optString("host", obj.optString("server", ""))).trim()
+                        val port = obj.optInt("port", 0)
+                        val type = obj.optString("type", obj.optString("protocol", defaultType)).lowercase()
+                        val user = obj.optString("username", obj.optString("user", ""))
+                        val pass = obj.optString("password", obj.optString("pass", ""))
+                        if (host.isNotEmpty() && port in 1..65535) {
+                            result.add(ProxyItem(host = host, port = port, type = type, username = user, password = pass))
+                        }
+                    }
+                } else {
+                    val root = JSONObject(trimmed)
+                    val arr = root.optJSONArray("proxies")
+                        ?: root.optJSONArray("data")
+                        ?: root.optJSONArray("list")
+                        ?: root.optJSONArray("results")
+                    if (arr != null) {
+                        for (i in 0 until arr.length()) {
+                            val obj = arr.optJSONObject(i) ?: continue
+                            val host = obj.optString("ip", obj.optString("host", obj.optString("server", ""))).trim()
+                            val port = obj.optInt("port", 0)
+                            val type = obj.optString("type", obj.optString("protocol", defaultType)).lowercase()
+                            val user = obj.optString("username", obj.optString("user", ""))
+                            val pass = obj.optString("password", obj.optString("pass", ""))
+                            if (host.isNotEmpty() && port in 1..65535) {
+                                result.add(ProxyItem(host = host, port = port, type = type, username = user, password = pass))
+                            }
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                // Fall back to line-by-line text parsing
+            }
+        }
+
+        if (result.isEmpty()) {
+            val lines = trimmed.split("\r\n", "\n", "\r", ";")
+            for (line in lines) {
+                val p = parseProxyLine(line, defaultType)
+                if (p != null) {
+                    result.add(p)
+                }
             }
         }
         return result
@@ -509,9 +602,10 @@ object IdentityService {
             }
 
             val client = OkHttpClient.Builder()
-                .connectTimeout(15, TimeUnit.SECONDS)
-                .readTimeout(15, TimeUnit.SECONDS)
+                .connectTimeout(20, TimeUnit.SECONDS)
+                .readTimeout(20, TimeUnit.SECONDS)
                 .followRedirects(true)
+                .followSslRedirects(true)
                 .build()
 
             val request = Request.Builder()

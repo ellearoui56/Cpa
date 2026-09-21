@@ -276,24 +276,29 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         onResult: (Boolean, String, Int) -> Unit
     ) {
         viewModelScope.launch {
-            addLog("info", "Fetching proxies from URL: $url")
-            val result = IdentityService.fetchProxiesFromUrl(url, protocol)
+            val cleanUrl = url.trim()
+            addLog("info", "Fetching proxies from URL: $cleanUrl")
+            val result = IdentityService.fetchProxiesFromUrl(cleanUrl, protocol)
             if (result.isSuccess) {
                 val list = result.getOrNull() ?: emptyList()
                 withContext(Dispatchers.IO) {
                     proxyDao.insertProxies(list)
                 }
-                val s = _settings.value
-                if (list.isNotEmpty() && (s.proxyHost.isBlank() || s.proxyListUrl != url)) {
+                if (list.isNotEmpty()) {
                     val first = list.first()
+                    val s = _settings.value
                     updateSettings(
                         s.copy(
-                            proxyListUrl = url,
-                            proxyHost = if (s.proxyHost.isBlank()) first.host else s.proxyHost,
-                            proxyPort = if (s.proxyPort.isBlank()) first.port.toString() else s.proxyPort,
-                            proxyType = if (s.proxyType == "none") first.type else s.proxyType
+                            proxyListUrl = cleanUrl,
+                            proxyHost = first.host,
+                            proxyPort = first.port.toString(),
+                            proxyType = first.type,
+                            proxyUser = first.username,
+                            proxyPass = first.password
                         )
                     )
+                    addLog("success", "Active proxy set to #${1} ${first.host}:${first.port} [${first.type.uppercase()}]")
+                    refreshGeoInfo()
                 }
                 addLog("success", "Successfully loaded ${list.size} proxies from URL into pool.")
                 onResult(true, "Successfully imported ${list.size} proxies", list.size)
@@ -318,10 +323,15 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun addSingleProxy(proxy: ProxyItem) {
+    fun addSingleProxy(proxy: ProxyItem, makeActive: Boolean = true) {
         viewModelScope.launch(Dispatchers.IO) {
             proxyDao.insertProxy(proxy)
             addLog("info", "Added proxy: ${proxy.host}:${proxy.port} [${proxy.type.uppercase()}]")
+            if (makeActive) {
+                withContext(Dispatchers.Main) {
+                    setActiveProxy(proxy)
+                }
+            }
         }
     }
 
@@ -357,16 +367,45 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             val startTime = System.currentTimeMillis()
             val geo = IdentityService.fetchGeoInfo(proxy.host, proxy.port, proxy.type, proxy.username, proxy.password)
             val ping = System.currentTimeMillis() - startTime
-            val isWorking = geo.isProxy || geo.ip.isNotBlank()
+            val isWorking = geo.ip.isNotBlank() &&
+                    geo.ip != "Proxy Unreachable" &&
+                    !geo.ip.contains("Error", ignoreCase = true) &&
+                    !geo.ip.contains("Offline", ignoreCase = true) &&
+                    !geo.ip.contains("No Internet", ignoreCase = true)
             withContext(Dispatchers.IO) {
                 proxyDao.updateProxyStatus(proxy.id, if (isWorking) "working" else "failed", ping)
             }
             if (isWorking) {
-                addLog("success", "Proxy ${proxy.host}:${proxy.port} working! IP: ${geo.ip} (${geo.city}, ${geo.country}) - ${ping}ms")
+                addLog("success", "Proxy ${proxy.host}:${proxy.port} working! Exit IP: ${geo.ip} (${geo.city}, ${geo.country}) - ${ping}ms")
                 onResult(true, "Working: ${geo.ip} (${geo.city}, ${geo.countryCode}) - ${ping}ms")
             } else {
-                addLog("error", "Proxy ${proxy.host}:${proxy.port} test failed")
-                onResult(false, "Connection failed or timeout")
+                addLog("error", "Proxy ${proxy.host}:${proxy.port} test failed (${geo.ip})")
+                onResult(false, "Connection failed: ${geo.ip}")
+            }
+        }
+    }
+
+    fun testProxyDetails(
+        host: String,
+        port: Int,
+        type: String,
+        user: String = "",
+        pass: String = "",
+        onResult: (Boolean, String) -> Unit
+    ) {
+        viewModelScope.launch {
+            val startTime = System.currentTimeMillis()
+            val geo = IdentityService.fetchGeoInfo(host, port, type, user, pass)
+            val ping = System.currentTimeMillis() - startTime
+            val isWorking = geo.ip.isNotBlank() &&
+                    geo.ip != "Proxy Unreachable" &&
+                    !geo.ip.contains("Error", ignoreCase = true) &&
+                    !geo.ip.contains("Offline", ignoreCase = true) &&
+                    !geo.ip.contains("No Internet", ignoreCase = true)
+            if (isWorking) {
+                onResult(true, "Working: ${geo.ip} (${geo.city}, ${geo.countryCode}) - ${ping}ms")
+            } else {
+                onResult(false, "Failed: ${geo.ip}")
             }
         }
     }

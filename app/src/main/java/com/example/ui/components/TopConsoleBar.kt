@@ -56,7 +56,7 @@ fun TopConsoleBar(
             .fillMaxWidth()
             .background(CpaCard)
             .border(1.dp, CpaBorder)
-            .padding(horizontal = 14.dp, vertical = 10.dp)
+            .padding(horizontal = 10.dp, vertical = 5.dp)
     ) {
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -68,17 +68,17 @@ fun TopConsoleBar(
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Box(
                         modifier = Modifier
-                            .size(10.dp)
+                            .size(8.dp)
                             .clip(CircleShape)
                             .background(if (automationState.isRunning) CpaSuccess else CpaPrimary)
                     )
-                    Spacer(modifier = Modifier.width(8.dp))
+                    Spacer(modifier = Modifier.width(6.dp))
                     Text(
                         text = "CPA AUTOMATOR",
                         color = CpaText,
-                        fontSize = 15.sp,
+                        fontSize = 13.sp,
                         fontWeight = FontWeight.Bold,
-                        letterSpacing = 1.sp,
+                        letterSpacing = 0.8.sp,
                         fontFamily = FontFamily.Monospace
                     )
                 }
@@ -86,17 +86,17 @@ fun TopConsoleBar(
                 // IP indicator
                 Row(
                     modifier = Modifier
-                        .padding(top = 4.dp)
+                        .padding(top = 2.dp)
                         .clip(RoundedCornerShape(4.dp))
                         .background(CpaBg)
                         .clickable { onRefreshGeo() }
-                        .padding(horizontal = 6.dp, vertical = 2.dp),
+                        .padding(horizontal = 5.dp, vertical = 1.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
                         text = "IP: ${automationState.activeIp}",
                         color = CpaTextMuted,
-                        fontSize = 11.sp,
+                        fontSize = 10.sp,
                         fontFamily = FontFamily.Monospace
                     )
                     Spacer(modifier = Modifier.width(4.dp))
@@ -104,7 +104,7 @@ fun TopConsoleBar(
                         imageVector = Icons.Default.Refresh,
                         contentDescription = "Refresh IP",
                         tint = CpaPrimary,
-                        modifier = Modifier.size(11.dp)
+                        modifier = Modifier.size(10.dp)
                     )
                 }
             }

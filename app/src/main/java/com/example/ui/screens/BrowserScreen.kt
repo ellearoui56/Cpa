@@ -217,14 +217,14 @@ fun BrowserScreen(
     }
 
     Column(modifier = modifier.fillMaxSize().background(CpaBg)) {
-        // 1. Ultra-Slim IP & Proxy Status Top Bar
+        // 1. Ultra-Slim IP & Proxy Status Top Bar (Thinned)
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(22.dp)
+                .height(16.dp)
                 .background(CpaCardElevated)
-                .border(0.5.dp, CpaBorder.copy(alpha = 0.6f))
-                .padding(horizontal = 6.dp),
+                .border(0.5.dp, CpaBorder.copy(alpha = 0.4f))
+                .padding(horizontal = 6.dp, vertical = 0.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
@@ -235,11 +235,11 @@ fun BrowserScreen(
             ) {
                 Box(
                     modifier = Modifier
-                        .size(5.dp)
+                        .size(4.dp)
                         .clip(CircleShape)
                         .background(if (WebProxyManager.isProxyActive) CpaSuccess else CpaWarning)
                 )
-                Spacer(modifier = Modifier.width(4.dp))
+                Spacer(modifier = Modifier.width(3.dp))
                 val displayIp = if (automationState.activeIp.isNotBlank() && automationState.activeIp != "Not Connected") {
                     automationState.activeIp
                 } else if (extractedInfo.ip.isNotBlank()) {
@@ -250,12 +250,12 @@ fun BrowserScreen(
                 Text(
                     text = "IP: $displayIp",
                     color = CpaText,
-                    fontSize = 9.sp,
+                    fontSize = 8.sp,
                     fontWeight = FontWeight.SemiBold,
                     fontFamily = FontFamily.Monospace,
                     maxLines = 1
                 )
-                Spacer(modifier = Modifier.width(5.dp))
+                Spacer(modifier = Modifier.width(4.dp))
 
                 // WebRTC Protection Badge
                 val webrtcColor = when (settings.webrtcMode) {
@@ -282,12 +282,12 @@ fun BrowserScreen(
                             }
                             onUpdateWebRtcMode?.invoke(nextMode)
                         }
-                        .padding(horizontal = 3.dp, vertical = 0.5.dp)
+                        .padding(horizontal = 2.dp)
                 ) {
                     Text(
                         text = webrtcBadgeText,
                         color = webrtcColor,
-                        fontSize = 7.5.sp,
+                        fontSize = 7.sp,
                         fontWeight = FontWeight.Bold,
                         fontFamily = FontFamily.Monospace
                     )
@@ -301,12 +301,12 @@ fun BrowserScreen(
                         .clip(RoundedCornerShape(2.dp))
                         .background(if (WebProxyManager.isProxyActive) CpaPrimary.copy(alpha = 0.12f) else CpaCard)
                         .border(0.5.dp, if (WebProxyManager.isProxyActive) CpaPrimary.copy(alpha = 0.3f) else CpaBorder, RoundedCornerShape(2.dp))
-                        .padding(horizontal = 3.dp, vertical = 0.5.dp)
+                        .padding(horizontal = 2.dp)
                 ) {
                     Text(
                         text = if (WebProxyManager.isProxyActive) "PROXY" else "DIRECT",
                         color = if (WebProxyManager.isProxyActive) CpaPrimary else CpaTextMuted,
-                        fontSize = 7.5.sp,
+                        fontSize = 7.sp,
                         fontWeight = FontWeight.Bold,
                         fontFamily = FontFamily.Monospace
                     )
@@ -318,7 +318,7 @@ fun BrowserScreen(
                 Text(
                     text = automationState.activePlanSummary,
                     color = CpaAccent,
-                    fontSize = 8.5.sp,
+                    fontSize = 7.5.sp,
                     fontWeight = FontWeight.Bold,
                     fontFamily = FontFamily.Monospace,
                     maxLines = 1,
@@ -340,7 +340,7 @@ fun BrowserScreen(
 
                 Box(
                     modifier = Modifier
-                        .size(5.dp)
+                        .size(4.dp)
                         .clip(CircleShape)
                         .background(statusColor)
                 )
@@ -348,7 +348,7 @@ fun BrowserScreen(
                 Text(
                     text = statusText,
                     color = statusColor,
-                    fontSize = 8.5.sp,
+                    fontSize = 7.5.sp,
                     fontWeight = FontWeight.Bold,
                     fontFamily = FontFamily.Monospace
                 )
