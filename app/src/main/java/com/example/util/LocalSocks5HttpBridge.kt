@@ -302,15 +302,16 @@ object LocalSocks5HttpBridge {
                 return null
             }
 
-            // Skip BND.ADDR and BND.PORT
+            // Skip BND.ADDR and BND.PORT using exact byte buffer reads (NEVER rely on InputStream.skip on sockets)
             val atyp = head[3].toInt() and 0xFF
             when (atyp) {
-                0x01 -> skipExact(sIn, 4 + 2) // IPv4
+                0x01 -> readExact(sIn, ByteArray(4 + 2)) // IPv4 + port
                 0x03 -> {
                     val len = sIn.read()
-                    if (len > 0) skipExact(sIn, len + 2)
+                    if (len == -1) throw java.io.EOFException("Premature EOF reading BND.ADDR")
+                    readExact(sIn, ByteArray(len + 2))
                 }
-                0x04 -> skipExact(sIn, 16 + 2) // IPv6
+                0x04 -> readExact(sIn, ByteArray(16 + 2)) // IPv6 + port
             }
 
             s.soTimeout = 0 // back to non-timeout for streaming
@@ -324,6 +325,14 @@ object LocalSocks5HttpBridge {
     private fun pipeBiDirectional(client: Socket, remote: Socket, clientIn: InputStream, clientOut: OutputStream) {
         val remoteIn = remote.getInputStream()
         val remoteOut = remote.getOutputStream()
+        val closed = java.util.concurrent.atomic.AtomicBoolean(false)
+
+        fun closeBoth() {
+            if (closed.compareAndSet(false, true)) {
+                try { client.close() } catch (e: Exception) {}
+                try { remote.close() } catch (e: Exception) {}
+            }
+        }
 
         val t1 = thread(name = "Bridge-C2R", isDaemon = true) {
             try {
@@ -335,7 +344,7 @@ object LocalSocks5HttpBridge {
                 }
             } catch (e: Exception) {
             } finally {
-                try { remote.shutdownOutput() } catch (e: Exception) {}
+                closeBoth()
             }
         }
 
@@ -349,22 +358,17 @@ object LocalSocks5HttpBridge {
                 }
             } catch (e: Exception) {
             } finally {
-                try { client.shutdownOutput() } catch (e: Exception) {}
+                closeBoth()
             }
         }
 
         try {
+            t1.join()
+        } catch (e: Exception) {}
+        try {
             t2.join()
         } catch (e: Exception) {}
-
-        try {
-            client.close()
-            remote.close()
-        } catch (e: Exception) {}
-
-        try {
-            t1.join(500)
-        } catch (e: Exception) {}
+        closeBoth()
     }
 
     private fun readLine(input: InputStream): String? {
@@ -391,19 +395,6 @@ object LocalSocks5HttpBridge {
             val read = input.read(buffer, offset, buffer.size - offset)
             if (read == -1) throw java.io.EOFException("Premature EOF reading SOCKS5 frame")
             offset += read
-        }
-    }
-
-    private fun skipExact(input: InputStream, bytesToSkip: Int) {
-        var remaining = bytesToSkip
-        while (remaining > 0) {
-            val skipped = input.skip(remaining.toLong()).toInt()
-            if (skipped <= 0) {
-                if (input.read() == -1) throw java.io.EOFException("Premature EOF")
-                remaining--
-            } else {
-                remaining -= skipped
-            }
         }
     }
 }

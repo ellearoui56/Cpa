@@ -13,6 +13,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.net.InetSocketAddress
 import java.net.Proxy
+import java.net.Socket
 import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Date
@@ -265,55 +266,61 @@ object IdentityService {
         proxyUser: String? = null,
         proxyPass: String? = null
     ): ExtractedInfo = withContext(Dispatchers.IO) {
-        val clientBuilder = OkHttpClient.Builder()
-            .connectTimeout(12, TimeUnit.SECONDS)
-            .readTimeout(12, TimeUnit.SECONDS)
-            .writeTimeout(12, TimeUnit.SECONDS)
-            .followRedirects(true)
-            .retryOnConnectionFailure(true)
-
         val hasProxy = !proxyHost.isNullOrBlank() && proxyPort != null && proxyPort > 0 && proxyType != "none" && proxyType != "direct"
 
+        var targetExitIp: String? = null
         if (hasProxy) {
             val cleanHost = proxyHost.trim()
             val cleanType = proxyType?.trim()?.lowercase() ?: "socks5"
             val cleanUser = proxyUser?.trim().orEmpty()
             val cleanPass = proxyPass?.trim().orEmpty()
-            val isSocks = cleanType == "socks" || cleanType == "socks5" || cleanType == "socks4"
 
-            try {
-                if (isSocks) {
-                    val bridgePort = com.example.util.LocalSocks5HttpBridge.start(cleanHost, proxyPort, cleanUser, cleanPass)
-                    if (bridgePort > 0) {
-                        clientBuilder.proxy(Proxy(Proxy.Type.HTTP, InetSocketAddress("127.0.0.1", bridgePort)))
-                    } else {
-                        clientBuilder.proxy(Proxy(Proxy.Type.SOCKS, InetSocketAddress(cleanHost, proxyPort)))
-                    }
-                } else {
-                    clientBuilder.proxy(Proxy(Proxy.Type.HTTP, InetSocketAddress(cleanHost, proxyPort)))
-                    if (cleanUser.isNotBlank() && cleanPass.isNotBlank()) {
-                        clientBuilder.proxyAuthenticator { _, response ->
-                            val credential = Credentials.basic(cleanUser, cleanPass)
-                            response.request.newBuilder()
-                                .header("Proxy-Authorization", credential)
-                                .build()
-                        }
-                    }
-                }
-            } catch (e: Exception) {
-                Log.e("IdentityService", "Failed to configure proxy client: ${e.message}")
+            val testRes = testProxyConnection(cleanHost, proxyPort, cleanType, cleanUser, cleanPass, 10000)
+            if (testRes.first) {
+                targetExitIp = testRes.second
+            } else {
+                return@withContext ExtractedInfo(
+                    ip = "Proxy Unreachable",
+                    country = "Connection Error",
+                    countryCode = "ERR",
+                    city = "Offline",
+                    region = testRes.second,
+                    street = "",
+                    postalCode = "",
+                    timezone = "America/New_York",
+                    language = "en-US",
+                    currency = "USD",
+                    isp = "$proxyHost:$proxyPort",
+                    org = "Check host/port/auth",
+                    latitude = 40.7128,
+                    longitude = -74.0060,
+                    isProxy = true
+                )
             }
         }
 
-        val client = clientBuilder.build()
+        // Direct fetch for geo details using targetExitIp or current public IP (always via Proxy.NO_PROXY to avoid interference)
+        val client = OkHttpClient.Builder()
+            .proxy(Proxy.NO_PROXY)
+            .connectTimeout(10, TimeUnit.SECONDS)
+            .readTimeout(10, TimeUnit.SECONDS)
+            .followRedirects(true)
+            .retryOnConnectionFailure(true)
+            .build()
 
-        val endpoints = listOf(
-            "https://api.ipify.org?format=json",
-            "https://api.myip.com",
-            "https://ipapi.co/json/",
-            "https://ipwho.is/",
-            "https://api.i.pn/json/"
-        )
+        val endpoints = if (!targetExitIp.isNullOrBlank()) {
+            listOf(
+                "https://ipwho.is/$targetExitIp",
+                "https://ipapi.co/$targetExitIp/json/"
+            )
+        } else {
+            listOf(
+                "https://ipwho.is/",
+                "https://api.ipify.org?format=json",
+                "https://api.myip.com",
+                "https://ipapi.co/json/"
+            )
+        }
 
         for (url in endpoints) {
             try {
@@ -329,7 +336,7 @@ object IdentityService {
 
                     val json = try { JSONObject(body) } catch (e: Exception) { null }
 
-                    val ip = json?.optString("ip", json.optString("query", ""))?.trim().orEmpty()
+                    val ip = json?.optString("ip", json.optString("query", ""))?.trim().orEmpty().takeIf { it.isNotBlank() } ?: (targetExitIp ?: "")
                     if (ip.isBlank() || !ip.contains(".")) continue
 
                     val country = json?.optString("country_name", json.optString("country", "United States")) ?: "United States"
@@ -366,6 +373,26 @@ object IdentityService {
             }
         }
 
+        if (targetExitIp != null) {
+            return@withContext ExtractedInfo(
+                ip = targetExitIp,
+                country = "United States",
+                countryCode = "US",
+                city = "New York",
+                region = "NY",
+                street = "",
+                postalCode = "10001",
+                timezone = "America/New_York",
+                language = "en-US",
+                currency = "USD",
+                isp = "$proxyHost:$proxyPort",
+                org = "Residential Network",
+                latitude = 40.7128,
+                longitude = -74.0060,
+                isProxy = hasProxy
+            )
+        }
+
         if (hasProxy) {
             // When proxy is configured and all endpoints failed, report connection failure
             return@withContext ExtractedInfo(
@@ -383,7 +410,7 @@ object IdentityService {
                 org = "Check host/port/auth",
                 latitude = 40.7128,
                 longitude = -74.0060,
-                isProxy = false
+                isProxy = true
             )
         }
 
@@ -405,6 +432,204 @@ object IdentityService {
             longitude = -74.0060,
             isProxy = false
         )
+    }
+
+    /**
+     * Standalone direct proxy socket test for SOCKS4/5 and HTTP/HTTPS proxies.
+     * Does NOT touch LocalSocks5HttpBridge or JVM system proxies.
+     * Returns Triple(isWorking, exitIpOrError, pingMs)
+     */
+    fun testProxyConnection(
+        host: String,
+        port: Int,
+        type: String,
+        user: String = "",
+        pass: String = "",
+        timeoutMs: Int = 10000
+    ): Triple<Boolean, String, Long> {
+        val cleanHost = host.trim()
+        val cleanType = type.trim().lowercase()
+        val cleanUser = user.trim()
+        val cleanPass = pass.trim()
+        val isSocks = cleanType.startsWith("socks")
+        val startTime = System.currentTimeMillis()
+
+        if (isSocks) {
+            val socket = Socket()
+            try {
+                socket.soTimeout = timeoutMs
+                socket.connect(InetSocketAddress(cleanHost, port), timeoutMs)
+                val sIn = socket.getInputStream()
+                val sOut = socket.getOutputStream()
+
+                // 1. SOCKS5 Greeting (RFC 1928)
+                val hasAuth = cleanUser.isNotBlank() && cleanPass.isNotBlank()
+                if (hasAuth) {
+                    sOut.write(byteArrayOf(0x05, 0x02, 0x00, 0x02))
+                } else {
+                    sOut.write(byteArrayOf(0x05, 0x01, 0x00))
+                }
+                sOut.flush()
+
+                val greeting = ByteArray(2)
+                var read = 0
+                while (read < 2) {
+                    val r = sIn.read(greeting, read, 2 - read)
+                    if (r == -1) return Triple(false, "SOCKS5 greeting EOF", System.currentTimeMillis() - startTime)
+                    read += r
+                }
+
+                if (greeting[0] != 0x05.toByte()) {
+                    return Triple(false, "Invalid SOCKS version: ${greeting[0]}", System.currentTimeMillis() - startTime)
+                }
+
+                val method = greeting[1].toInt() and 0xFF
+                if (method == 0xFF) {
+                    return Triple(false, "No acceptable SOCKS auth methods", System.currentTimeMillis() - startTime)
+                }
+
+                // 2. Authentication subnegotiation (RFC 1929)
+                if (method == 0x02) {
+                    val uBytes = cleanUser.toByteArray(Charsets.UTF_8)
+                    val pBytes = cleanPass.toByteArray(Charsets.UTF_8)
+                    val authReq = ByteArray(3 + uBytes.size + pBytes.size)
+                    authReq[0] = 0x01
+                    authReq[1] = uBytes.size.toByte()
+                    System.arraycopy(uBytes, 0, authReq, 2, uBytes.size)
+                    authReq[2 + uBytes.size] = pBytes.size.toByte()
+                    System.arraycopy(pBytes, 0, authReq, 3 + uBytes.size, pBytes.size)
+
+                    sOut.write(authReq)
+                    sOut.flush()
+
+                    val authResp = ByteArray(2)
+                    read = 0
+                    while (read < 2) {
+                        val r = sIn.read(authResp, read, 2 - read)
+                        if (r == -1) return Triple(false, "SOCKS auth EOF", System.currentTimeMillis() - startTime)
+                        read += r
+                    }
+                    if (authResp[1] != 0x00.toByte()) {
+                        return Triple(false, "Authentication Failed (invalid credentials)", System.currentTimeMillis() - startTime)
+                    }
+                }
+
+                // 3. Connect to api.ipify.org:80 (via remote DNS domain 0x03)
+                val domain = "api.ipify.org".toByteArray(Charsets.US_ASCII)
+                val connReq = ByteArray(4 + 1 + domain.size + 2)
+                connReq[0] = 0x05
+                connReq[1] = 0x01 // CONNECT
+                connReq[2] = 0x00
+                connReq[3] = 0x03 // Domain name
+                connReq[4] = domain.size.toByte()
+                System.arraycopy(domain, 0, connReq, 5, domain.size)
+                connReq[5 + domain.size] = 0x00
+                connReq[6 + domain.size] = 80.toByte()
+
+                sOut.write(connReq)
+                sOut.flush()
+
+                val connHead = ByteArray(4)
+                read = 0
+                while (read < 4) {
+                    val r = sIn.read(connHead, read, 4 - read)
+                    if (r == -1) return Triple(false, "SOCKS connect EOF", System.currentTimeMillis() - startTime)
+                    read += r
+                }
+
+                if (connHead[1] != 0x00.toByte()) {
+                    return Triple(false, "SOCKS CONNECT error code: ${connHead[1]}", System.currentTimeMillis() - startTime)
+                }
+
+                // Skip BND address & port using exact reads
+                val atyp = connHead[3].toInt() and 0xFF
+                when (atyp) {
+                    0x01 -> {
+                        val b = ByteArray(6)
+                        var off = 0
+                        while (off < 6) { val r = sIn.read(b, off, 6 - off); if (r == -1) break; off += r }
+                    }
+                    0x03 -> {
+                        val len = sIn.read()
+                        if (len > 0) {
+                            val b = ByteArray(len + 2)
+                            var off = 0
+                            while (off < b.size) { val r = sIn.read(b, off, b.size - off); if (r == -1) break; off += r }
+                        }
+                    }
+                    0x04 -> {
+                        val b = ByteArray(18)
+                        var off = 0
+                        while (off < 18) { val r = sIn.read(b, off, 18 - off); if (r == -1) break; off += r }
+                    }
+                }
+
+                // 4. Send HTTP GET to api.ipify.org
+                val httpReq = "GET /?format=json HTTP/1.1\r\nHost: api.ipify.org\r\nUser-Agent: curl/7.88\r\nConnection: close\r\n\r\n"
+                sOut.write(httpReq.toByteArray(Charsets.US_ASCII))
+                sOut.flush()
+
+                val responseBytes = java.io.ByteArrayOutputStream()
+                val buf = ByteArray(4096)
+                var n: Int
+                while (sIn.read(buf).also { n = it } != -1) {
+                    responseBytes.write(buf, 0, n)
+                }
+                val resStr = responseBytes.toString("UTF-8")
+                val ping = System.currentTimeMillis() - startTime
+                val body = resStr.substringAfter("\r\n\r\n", resStr)
+                val json = try { JSONObject(body) } catch (_: Exception) { null }
+                val exitIp = json?.optString("ip")?.trim() ?: body.trim()
+
+                if (exitIp.isNotBlank() && exitIp.contains(".")) {
+                    return Triple(true, exitIp, ping)
+                } else {
+                    return Triple(false, "Unexpected response: $body", ping)
+                }
+            } catch (e: Exception) {
+                val ping = System.currentTimeMillis() - startTime
+                return Triple(false, e.localizedMessage ?: "Connection error", ping)
+            } finally {
+                try { socket.close() } catch (_: Exception) {}
+            }
+        } else {
+            // HTTP / HTTPS Proxy testing
+            try {
+                val clientBuilder = OkHttpClient.Builder()
+                    .proxy(Proxy(Proxy.Type.HTTP, InetSocketAddress(cleanHost, port)))
+                    .connectTimeout(timeoutMs.toLong(), TimeUnit.MILLISECONDS)
+                    .readTimeout(timeoutMs.toLong(), TimeUnit.MILLISECONDS)
+
+                if (cleanUser.isNotBlank() && cleanPass.isNotBlank()) {
+                    clientBuilder.proxyAuthenticator { _, response ->
+                        val credential = Credentials.basic(cleanUser, cleanPass)
+                        response.request.newBuilder()
+                            .header("Proxy-Authorization", credential)
+                            .build()
+                    }
+                }
+
+                val client = clientBuilder.build()
+                val request = Request.Builder()
+                    .url("https://api.ipify.org?format=json")
+                    .header("User-Agent", "Mozilla/5.0")
+                    .build()
+
+                val resp = client.newCall(request).execute()
+                val ping = System.currentTimeMillis() - startTime
+                if (resp.isSuccessful) {
+                    val b = resp.body?.string() ?: ""
+                    val json = try { JSONObject(b) } catch (_: Exception) { null }
+                    val exitIp = json?.optString("ip")?.trim() ?: b.trim()
+                    return Triple(true, exitIp, ping)
+                } else {
+                    return Triple(false, "HTTP ${resp.code}: ${resp.message}", ping)
+                }
+            } catch (e: Exception) {
+                val ping = System.currentTimeMillis() - startTime
+                return Triple(false, e.localizedMessage ?: "HTTP proxy failed", ping)
+            }
+        }
     }
 
     suspend fun checkLeadCPA(userId: String, apiKey: String, ip: String): Pair<Boolean, String> = withContext(Dispatchers.IO) {
@@ -583,11 +808,14 @@ object IdentityService {
         }
 
         if (result.isEmpty()) {
-            val lines = trimmed.split("\r\n", "\n", "\r", ";")
+            val lines = trimmed.split(Regex("[\\r\\n;]+|(?=(?:socks[45]?|https?|http)://)"))
             for (line in lines) {
-                val p = parseProxyLine(line, defaultType)
-                if (p != null) {
-                    result.add(p)
+                val cleaned = line.trim()
+                if (cleaned.isNotBlank()) {
+                    val p = parseProxyLine(cleaned, defaultType)
+                    if (p != null) {
+                        result.add(p)
+                    }
                 }
             }
         }
@@ -602,8 +830,9 @@ object IdentityService {
             }
 
             val client = OkHttpClient.Builder()
-                .connectTimeout(20, TimeUnit.SECONDS)
-                .readTimeout(20, TimeUnit.SECONDS)
+                .proxy(Proxy.NO_PROXY)
+                .connectTimeout(25, TimeUnit.SECONDS)
+                .readTimeout(25, TimeUnit.SECONDS)
                 .followRedirects(true)
                 .followSslRedirects(true)
                 .build()
